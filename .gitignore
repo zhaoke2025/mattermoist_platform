@@ -4,3 +4,5 @@ certs
 .env
 docker-compose.override.yml
 docker-compose.override.yaml
+_tmp_mattermost_plugin_agents/
+*.tar.gz

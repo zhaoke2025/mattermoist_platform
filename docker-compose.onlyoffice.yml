@@ -1,0 +1,17 @@
+services:
+  onlyoffice-documentserver:
+    image: onlyoffice/documentserver:${ONLYOFFICE_DOCUMENTSERVER_IMAGE_TAG}
+    container_name: onlyoffice-documentserver
+    restart: ${RESTART_POLICY}
+    environment:
+      - JWT_ENABLED=true
+      - JWT_SECRET=${ONLYOFFICE_JWT_SECRET}
+      - JWT_HEADER=AuthorizationJWT
+      - ALLOW_PRIVATE_IP_ADDRESS=true
+    ports:
+      - ${ONLYOFFICE_PORT}:80
+    volumes:
+      - ${ONLYOFFICE_LOGS_PATH}:/var/log/onlyoffice
+      - ${ONLYOFFICE_DATA_PATH}:/var/www/onlyoffice/Data
+      - ${ONLYOFFICE_LIB_PATH}:/var/lib/onlyoffice
+      - ${ONLYOFFICE_DB_PATH}:/var/lib/postgresql
