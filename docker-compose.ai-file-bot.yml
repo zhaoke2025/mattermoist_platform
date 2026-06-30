@@ -1,0 +1,18 @@
+services:
+  ai-file-bot:
+    build:
+      context: ./ai-file-bot
+    restart: ${RESTART_POLICY}
+    depends_on:
+      - mattermost
+    environment:
+      - MATTERMOST_URL=http://mattermost:8065
+      - MATTERMOST_TOKEN=${AI_FILE_BOT_MATTERMOST_TOKEN}
+      - BOT_USERNAME=${AI_FILE_BOT_USERNAME}
+      - OPENAI_BASE_URL=${AI_FILE_BOT_OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${AI_FILE_BOT_OPENAI_API_KEY}
+      - OPENAI_MODEL=${AI_FILE_BOT_OPENAI_MODEL}
+      - OPENAI_MAX_TOKENS=${AI_FILE_BOT_OPENAI_MAX_TOKENS}
+      - POLL_INTERVAL_SECONDS=${AI_FILE_BOT_POLL_INTERVAL_SECONDS}
+      - MAX_FILES_PER_REQUEST=${AI_FILE_BOT_MAX_FILES_PER_REQUEST}
+      - LOG_LEVEL=${AI_FILE_BOT_LOG_LEVEL}
