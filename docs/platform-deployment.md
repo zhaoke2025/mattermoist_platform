@@ -186,7 +186,7 @@ docker exec docker-postgres-1 pg_dump -U mmuser mattermost > mattermost_backup.s
 
 后续可以继续扩展：
 
-- Jitsi Meet：视频会议能力。
-- ONLYOFFICE DocSpace：独立文档空间、外部协作资料室。
-- OCR：让 `filebot` 支持扫描版 PDF 和图片文字识别。
+- ONLYOFFICE DocSpace：当前优先阶段。参见 [职责边界](docspace-boundary.md)、[部署准备](docspace-deployment.md)、[频道与房间映射](docspace-room-mapping.md)和[外部协作验收](docspace-acceptance.md)。
+- Jitsi Meet：DocSpace 后的下一阶段，参见 [接入评估](jitsi-integration-evaluation.md)。
+- OCR：暂缓。后续让 `filebot` 支持扫描版 PDF 和图片文字识别。
 - 统一平台 Bot：整合附件分析、会议创建、DocSpace 房间创建和通知。
