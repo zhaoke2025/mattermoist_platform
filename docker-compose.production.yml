@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:${POSTGRES_IMAGE_TAG:-16-alpine}
+    container_name: mattermost-db
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - mattermost_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - mattermost_internal
+
+  mattermost:
+    image: mattermost/${MATTERMOST_IMAGE:-mattermost-team-edition}:${MATTERMOST_IMAGE_TAG:-11.9.0}
+    container_name: mattermost
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable&connect_timeout=10
+      MM_SERVICESETTINGS_SITEURL: ${MM_SERVICESETTINGS_SITEURL}
+      MM_SERVICESETTINGS_LISTENADDRESS: :8065
+      MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
+      MM_FILESETTINGS_MAXFILESIZE: "104857600"
+      MM_TEAMSETTINGS_SITENAME: ${MM_TEAMSETTINGS_SITENAME}
+      MM_TEAMSETTINGS_CUSTOMDESCRIPTIONTEXT: ${MM_TEAMSETTINGS_CUSTOMDESCRIPTIONTEXT}
+      MM_TEAMSETTINGS_ENABLECUSTOMBRAND: ${MM_TEAMSETTINGS_ENABLECUSTOMBRAND:-true}
+      MM_TEAMSETTINGS_CUSTOMBRANDTEXT: ${MM_TEAMSETTINGS_CUSTOMBRANDTEXT}
+    volumes:
+      - ${MATTERMOST_CONFIG_PATH}:/mattermost/config
+      - ${MATTERMOST_DATA_PATH}:/mattermost/data
+      - ${MATTERMOST_LOGS_PATH}:/mattermost/logs
+      - ${MATTERMOST_PLUGINS_PATH}:/mattermost/plugins
+      - ${MATTERMOST_CLIENT_PLUGINS_PATH}:/mattermost/client/plugins
+      - ${MATTERMOST_BLEVE_INDEXES_PATH}:/mattermost/bleve-indexes
+    expose:
+      - "8065"
+    healthcheck:
+      test: ["CMD", "/mattermost/bin/mmctl", "system", "status", "--local"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    mem_limit: 4g
+    networks:
+      - mattermost_internal
+      - onlyoffice
+
+  ai-file-bot:
+    profiles: ["ai-file-bot"]
+    build:
+      context: ./ai-file-bot
+    restart: unless-stopped
+    depends_on:
+      mattermost:
+        condition: service_healthy
+    environment:
+      MATTERMOST_URL: http://mattermost:8065
+      MATTERMOST_TOKEN: ${AI_FILE_BOT_MATTERMOST_TOKEN:-}
+      BOT_USERNAME: ${AI_FILE_BOT_USERNAME:-filebot}
+      OPENAI_BASE_URL: ${AI_FILE_BOT_OPENAI_BASE_URL:-https://api.deepseek.com/v1}
+      OPENAI_API_KEY: ${AI_FILE_BOT_OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${AI_FILE_BOT_OPENAI_MODEL:-deepseek-v4-flash}
+      OPENAI_MAX_TOKENS: ${AI_FILE_BOT_OPENAI_MAX_TOKENS:-2048}
+      POLL_INTERVAL_SECONDS: ${AI_FILE_BOT_POLL_INTERVAL_SECONDS:-3}
+      MAX_FILES_PER_REQUEST: ${AI_FILE_BOT_MAX_FILES_PER_REQUEST:-3}
+      LOG_LEVEL: ${AI_FILE_BOT_LOG_LEVEL:-INFO}
+    networks:
+      - mattermost_internal
+
+volumes:
+  mattermost_postgres_data:
+    external: true
+    name: mattermost_mattermost_postgres_data
+
+networks:
+  mattermost_internal:
+  onlyoffice:
+    external: true
+    name: onlyoffice

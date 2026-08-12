@@ -1,12 +1,12 @@
 # Mattermost 接入 Jitsi Meet 评估
 
-本文档对应 ZZJ-23。当前只完成接入方案和验收口径，等 DocSpace 阶段完成后再部署。
+本文档对应 ZZJ-23。DocSpace 阶段已完成，Jitsi 部署按本文结论执行；Linear 状态由项目负责人确认验收后另行更新。
 
 ## 结论
 
 MVP 建议采用：
 
-- 独立部署 Jitsi Meet，使用单独域名，例如 `https://meet.example.com`。
+- 在现有生产服务器上以独立 Compose 项目部署 Jitsi Meet，使用独立域名 `https://meet.rongsunai.com`。
 - Mattermost 安装社区维护的 Jitsi 插件。
 - 第一阶段使用“新窗口打开会议”，不启用实验性的嵌入浮窗。
 - 会议房间名称使用随机值或 UUID，不直接使用可猜测的频道名。
@@ -33,6 +33,17 @@ MVP 建议采用：
 
 如果与其他服务同机，必须先检查端口冲突。当前 Mattermost Calls 已使用自己的媒体端口，Jitsi 不能未经规划直接复用。
 
+## 已核实的部署拓扑（2026-08-06）
+
+- 服务器：`118.178.125.202`，现有 Mattermost 11.9.0 和 DocSpace 3.7.2 保持不变。
+- Jitsi：官方 Docker 稳定版 `stable-10978`，目录 `/srv/jitsi-meet`，持久化目录 `/srv/jitsi-meet-cfg`。
+- Web：容器 HTTP 仅绑定 `127.0.0.1:8000`，由现有反向代理通过 `meet.rongsunai.com` 提供 HTTPS。
+- 媒体：JVB 使用 `10000/UDP`，不复用 Mattermost Calls 的媒体端口。
+- 身份策略：启用内部主持人认证和访客加入；访客可以加入已由主持人建立的会议，但不能自行创建会议。
+- 回滚：停止 `/srv/jitsi-meet` Compose 项目并移除 `meet.rongsunai.com` 反向代理配置，Mattermost 和 DocSpace 不受影响。
+
+服务器资源核对结果为 8 核 CPU、29 GiB 内存、根分区约 54 GiB 可用，满足小规模 MVP 验证。上线前仍需确认 DNS 已解析到该服务器、证书包含 `meet.rongsunai.com`，并同时在主机防火墙和云安全组开放 `10000/UDP`。
+
 ## 插件选择和配置
 
 候选插件：
@@ -41,7 +52,7 @@ MVP 建议采用：
 mattermost-community/mattermost-plugin-jitsi
 ```
 
-当前评估基线为插件 `v2.1.0`。部署时重新确认最新稳定版、发行说明和 Mattermost Server 兼容范围，并保存下载文件的校验值。
+当前评估基线为插件 `v2.1.0`，其最低 Mattermost Server 版本为 5.2.0。插件包 SHA-256 为 `73b97d2f3411440b44886d37b99827f55f0da30141c77b3ec62b8fc2e0bd1de4`。
 
 第一阶段配置：
 
@@ -52,6 +63,15 @@ mattermost-community/mattermost-plugin-jitsi
 - JWT：先在受控测试环境验证基础连通；生产外部会议前必须完成身份和访客策略验证。
 
 不在代码库、插件配置截图或聊天消息中暴露 JWT 密钥。
+
+## 执行记录（2026-08-06）
+
+- Jitsi `stable-10978` 的 Web、Prosody、Jicofo 和 JVB 容器已启动，Jicofo 已识别 JVB。
+- `meet.rongsunai.com` 的反向代理已加入现有 `onlyoffice-proxy`；服务器本地按 SNI 验证首页和 `config.js` 正常，DocSpace 与 Mattermost 原入口均返回 200。
+- 主机防火墙已开放 `10000/UDP`；云安全组仍需以控制台规则为准。
+- Mattermost 已安装并启用 Jitsi 插件 `v2.1.0`，配置为自建域名、UUID 房间名、新窗口打开及关闭 JWT。
+- 插件安装时临时启用上传，完成后已恢复为禁止上传。
+- 公网验收待 `meet.rongsunai.com` DNS 生效并为现有证书增加该域名后执行。
 
 ## 验收步骤
 
@@ -72,7 +92,7 @@ mattermost-community/mattermost-plugin-jitsi
 
 ## 风险和退出条件
 
-- 插件与 Mattermost 11.7 不兼容：停止上线，保留纯 Jitsi 链接方案或评估替代插件。
+- 插件与 Mattermost 11.9 不兼容：停止上线，保留纯 Jitsi 链接方案或评估替代插件。
 - 嵌入模式出现跨域、权限或界面问题：继续使用独立窗口，不在 MVP 中修补嵌入模式。
 - 未完成会议身份和访客策略：只允许内网或受控测试，不开放外部业务会议。
 - 音视频受防火墙或 NAT 影响：先修正 `PUBLIC_URL`、UDP 端口和网络映射，再判断插件问题。

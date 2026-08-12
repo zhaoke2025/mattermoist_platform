@@ -2,12 +2,17 @@
 
 本文档对应 ZZJ-30。目标是在不开发同步插件的前提下，让用户可以从 Mattermost 频道稳定进入对应的 DocSpace 文档空间。
 
-## 第一阶段结论
+## 版本说明
+
+- 第一版（设计版）：确定频道与房间的职责边界、命名规则、登记字段和人工授权流程。
+- 第二版（落地验收版）：基于正式 Mattermost、DocSpace 域名和普通用户账号完成真实映射及权限验证。
+
+## 第二版结论
 
 - Mattermost 是沟通入口，DocSpace 是正式文档空间。
 - 一个频道可以配置一个“主 DocSpace 房间”，但不是所有频道都必须创建房间。
 - 一个 DocSpace 房间默认只对应一个频道；确需跨频道共用时，由房间负责人确认。
-- 第一阶段不自动同步频道成员、DocSpace 成员和权限。
+- 当前不自动同步频道成员、DocSpace 成员和权限，也未配置单点登录。
 - 房间入口以频道书签或频道置顶消息发布，不把文档重复上传到两个系统。
 
 这种设计先解决“文档放哪里、用户从哪里进入”的问题，并避免两套成员权限自动同步带来的误授权。
@@ -47,6 +52,40 @@
 | `created_at` | 建立映射的时间 |
 
 第一阶段可用受控表格登记。不要在 Git 中保存邀请链接、访问令牌或个人信息。
+
+### 首个正式映射
+
+| 字段 | 当前值 |
+| --- | --- |
+| `team_id` | 已在 Mattermost 正式环境建立，后续 Bot 接入时回填内部 ID |
+| `channel_id` | 已在 Mattermost 正式环境建立，后续 Bot 接入时回填内部 ID |
+| `channel_name` | `DocSpace文档协作` |
+| `room_id` | `9` |
+| `room_name` | `OPC-DocSpace-验收` |
+| `room_url` | `https://docs.rongsunai.com/rooms/shared/9/filter?folder=9&page=1&sortby=DateAndTime&sortorder=descending` |
+| `room_type` | 协作房间 |
+| `owner` | DocSpace 管理员 |
+| `status` | 使用中，入口及普通用户编辑权限已验证 |
+| `created_at` | `2026-08-04` |
+| `accepted_at` | `2026-08-05` |
+
+Mattermost 已创建私有频道 `DocSpace文档协作`，并在频道标题中发布以下固定入口：
+
+```text
+本频道正式文档统一存放在 DocSpace：
+房间：OPC-DocSpace-验收
+入口：https://docs.rongsunai.com/rooms/shared/9/filter?folder=9&page=1&sortby=DateAndTime&sortorder=descending
+权限申请：联系 DocSpace 房间管理员
+```
+
+上述地址是固定房间地址，不是有有效期的邀请链接；用户仍须在 DocSpace 中获得对应房间权限。
+
+### 第二版验收结果
+
+- 普通用户经邀请后可加入 Mattermost，并仅在被授权后看到私有频道。
+- 普通用户从频道固定入口可进入 `OPC-DocSpace-验收` 房间。
+- 普通用户在 DocSpace 中被授予编辑器权限，可打开、编辑并保存文档。
+- Mattermost 与 DocSpace 目前使用独立账号和独立会话，跳转后未登录时进入 DocSpace 登录页属于预期行为。
 
 ## 权限规则
 

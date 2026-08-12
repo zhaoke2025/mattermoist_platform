@@ -1,0 +1,14 @@
+{
+  "PluginSettings": {
+    "Plugins": {
+      "jitsi": {
+        "JitsiURL": "https://meet.rongsunai.com",
+        "JitsiEmbedded": false,
+        "JitsiPrejoinPage": true,
+        "JitsiNamingScheme": "uuid",
+        "JitsiJWT": false,
+        "JitsiCompatibilityMode": false
+      }
+    }
+  }
+}
