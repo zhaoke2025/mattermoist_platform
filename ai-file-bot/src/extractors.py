@@ -9,6 +9,8 @@ from openpyxl import load_workbook
 from pptx import Presentation
 from pypdf import PdfReader
 
+from .ocr import OCRError, extract_ocr_text
+
 
 MAX_EXTRACTED_CHARS = 120_000
 
@@ -28,7 +30,9 @@ def clamp_text(text: str, limit: int = MAX_EXTRACTED_CHARS) -> str:
 def extract_text(file_path: Path, original_name: str) -> str:
     suffix = Path(original_name).suffix.lower()
     if suffix == ".pdf":
-        return clamp_text(_extract_pdf(file_path))
+        return clamp_text(_extract_pdf(file_path, original_name))
+    if suffix in {".jpg", ".jpeg", ".png"}:
+        return clamp_text(_extract_with_ocr(file_path, original_name))
     if suffix == ".docx":
         return clamp_text(_extract_docx(file_path))
     if suffix == ".xlsx":
@@ -40,16 +44,26 @@ def extract_text(file_path: Path, original_name: str) -> str:
     raise ExtractionError(f"Unsupported file type: {suffix or 'unknown'}")
 
 
-def _extract_pdf(file_path: Path) -> str:
+def _extract_pdf(file_path: Path, original_name: str) -> str:
     reader = PdfReader(str(file_path))
     chunks: list[str] = []
+    has_image_only_page = False
     for index, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
         if text.strip():
             chunks.append(f"--- Page {index} ---\n{text}")
-    if not chunks:
-        raise ExtractionError("No readable text was extracted from the PDF. It may be scanned images.")
+        else:
+            has_image_only_page = True
+    if has_image_only_page:
+        return _extract_with_ocr(file_path, original_name)
     return "\n\n".join(chunks)
+
+
+def _extract_with_ocr(file_path: Path, original_name: str) -> str:
+    try:
+        return extract_ocr_text(file_path, original_name)
+    except OCRError as exc:
+        raise ExtractionError(str(exc)) from exc
 
 
 def _extract_docx(file_path: Path) -> str:

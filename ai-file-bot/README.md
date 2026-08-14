@@ -7,12 +7,14 @@
 ## 支持的文件类型
 
 - 可复制文本的 PDF
+- 扫描版 PDF（支持多页）
+- JPG、JPEG、PNG 图片
 - DOCX
 - XLSX
 - PPTX
 - TXT、Markdown、CSV、日志文件
 
-注意：扫描版 PDF 和纯图片文件目前不会做 OCR 识别。
+OCR 默认调用云端 Qwen3.5-OCR；单页请求失败或未返回有效文字时，会自动使用本地 PaddleOCR 重新识别。
 
 ## Mattermost 配置要求
 
@@ -39,6 +41,20 @@ AI_FILE_BOT_OPENAI_MODEL=deepseek-chat
 
 这里不限定必须使用 DeepSeek，只要是兼容 OpenAI API 格式的模型服务都可以接入。
 
+## OCR 配置要求
+
+云端 OCR 与附件分析模型分别配置，避免把仅支持文本的模型误用于图片识别：
+
+```env
+AI_FILE_BOT_OCR_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+AI_FILE_BOT_OCR_API_KEY=你的_DashScope_api_key
+AI_FILE_BOT_OCR_MODEL=qwen3.5-ocr
+AI_FILE_BOT_OCR_MAX_WORKERS=5
+AI_FILE_BOT_OCR_MAX_PDF_PAGES=20
+```
+
+未配置云端 OCR 密钥时会直接使用 PaddleOCR。PaddleOCR 首次运行需要下载中文模型，模型缓存在 Docker 数据卷 `ai_file_bot_paddle_models` 中，后续重建容器不会重复下载。
+
 ## 启动方式
 
 ```powershell
@@ -63,7 +79,7 @@ docker compose -f docker-compose.yml -f docker-compose.without-nginx.yml -f dock
 
 ## 常见限制
 
-- 当前不会读取图片里的文字。
-- 扫描版 PDF 通常提取不到正文内容。
+- 默认最多识别 20 页 PDF，可通过 `AI_FILE_BOT_OCR_MAX_PDF_PAGES` 调整。
+- PaddleOCR 兜底在 CPU 上运行，首次下载模型及首次识别耗时较长。
 - 文件过大时会截断部分文本后再发送给大模型。
 - 机器人只能分析它已经加入的频道里的附件。
