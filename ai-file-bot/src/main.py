@@ -5,12 +5,14 @@ import os
 import re
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 import requests
 from openai import OpenAI
 
+from .commands import CommandError, parse_command
 from .extractors import ExtractionError, extract_text
 
 
@@ -24,6 +26,7 @@ MM_TOKEN = os.environ["MATTERMOST_TOKEN"]
 BOT_USERNAME = os.getenv("BOT_USERNAME", "filebot").lower()
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "3"))
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "3"))
+JITSI_BASE_URL = os.getenv("JITSI_BASE_URL", "https://meet.rongsunai.com").rstrip("/")
 
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
@@ -92,6 +95,9 @@ class MattermostClient:
     def get_file_info(self, file_id: str) -> dict[str, Any]:
         return self.request("GET", f"/api/v4/files/{file_id}/info")
 
+    def get_user(self, user_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/api/v4/users/{user_id}")
+
     def download_file(self, file_id: str, dest: Path) -> None:
         response = self.session.get(f"{MM_URL}/api/v4/files/{file_id}", timeout=120)
         response.raise_for_status()
@@ -133,8 +139,8 @@ def collect_file_ids(mm: MattermostClient, post: dict[str, Any]) -> list[str]:
 def analyze_files(mm: MattermostClient, file_ids: list[str], instruction: str) -> str:
     if not file_ids:
         return (
-            "I did not find an analyzable attachment in this thread or nearby channel "
-            "messages. Reply under the file message with `@filebot analyze this file`."
+            "未找到可分析的附件。请在附件消息下方回复："
+            "`@filebot 分析并总结这个附件`。"
         )
 
     extracted_parts: list[str] = []
@@ -191,16 +197,51 @@ def ask_llm(prompt: str) -> str:
     return response.choices[0].message.content or "No valid analysis result was generated."
 
 
+def create_meeting(post: dict[str, Any], creator_username: str, title: str, duration: int | None) -> str:
+    room_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{MM_URL}/posts/{post['id']}")
+    meeting_url = f"{JITSI_BASE_URL}/{room_id}"
+    duration_text = f"{duration} 分钟" if duration else "未设置"
+    return (
+        "### 会议已创建\n"
+        f"- 会议标题：{title}\n"
+        f"- 会议入口：[点击加入会议]({meeting_url})\n"
+        f"- 创建人：@{creator_username}\n"
+        f"- 预计时长：{duration_text}"
+    )
+
+
 def handle_post(mm: MattermostClient, post: dict[str, Any]) -> None:
-    instruction = re.sub(rf"@{re.escape(BOT_USERNAME)}", "", post.get("message", ""), flags=re.IGNORECASE).strip()
     root_id = post.get("root_id") or post["id"]
     try:
-        file_ids = collect_file_ids(mm, post)
-        LOGGER.info("post %s matched, files=%s", post["id"], file_ids)
-        answer = analyze_files(mm, file_ids, instruction)
+        command = parse_command(
+            post.get("message", ""),
+            BOT_USERNAME,
+            allow_legacy_filebot=BOT_USERNAME == "filebot",
+        )
+    except CommandError as exc:
+        mm.create_post(
+            post["channel_id"],
+            f"### 执行失败\n- 错误码：{exc.code}\n- 原因：{exc}",
+            root_id,
+        )
+        return
+
+    try:
+        if command.domain == "meeting" and command.action == "create":
+            creator = mm.get_user(post["user_id"])
+            answer = create_meeting(
+                post,
+                creator.get("username") or post["user_id"],
+                command.instruction,
+                command.duration_minutes,
+            )
+        else:
+            file_ids = collect_file_ids(mm, post)
+            LOGGER.info("post %s matched, files=%s", post["id"], file_ids)
+            answer = analyze_files(mm, file_ids, command.instruction)
     except Exception as exc:
         LOGGER.exception("failed to handle post %s", post.get("id"))
-        answer = f"File analysis failed: {exc}"
+        answer = f"### 执行失败\n- 错误码：BOT-UPSTREAM-ERROR\n- 原因：{exc}"
     mm.create_post(post["channel_id"], answer, root_id)
 
 

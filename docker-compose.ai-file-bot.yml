@@ -26,6 +26,7 @@ services:
       - PADDLE_OCR_DEVICE=${AI_FILE_BOT_PADDLE_OCR_DEVICE:-cpu}
       - POLL_INTERVAL_SECONDS=${AI_FILE_BOT_POLL_INTERVAL_SECONDS}
       - MAX_FILES_PER_REQUEST=${AI_FILE_BOT_MAX_FILES_PER_REQUEST}
+      - JITSI_BASE_URL=${AI_FILE_BOT_JITSI_BASE_URL:-https://meet.rongsunai.com}
       - LOG_LEVEL=${AI_FILE_BOT_LOG_LEVEL}
     volumes:
       - ai_file_bot_paddle_models:/root/.paddlex
