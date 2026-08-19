@@ -12,8 +12,10 @@ from typing import Any
 import requests
 from openai import OpenAI
 
-from .commands import CommandError, parse_command
+from .commands import CommandError, ParsedCommand, parse_command
+from .docspace import DocSpaceClient
 from .extractors import ExtractionError, extract_text
+from .mappings import RoomMappingStore
 
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -27,6 +29,15 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "filebot").lower()
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "3"))
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "3"))
 JITSI_BASE_URL = os.getenv("JITSI_BASE_URL", "https://meet.rongsunai.com").rstrip("/")
+DOCSPACE_BASE_URL = os.getenv("DOCSPACE_BASE_URL", "").rstrip("/")
+DOCSPACE_API_KEY = os.getenv("DOCSPACE_API_KEY", "")
+DOCSPACE_MAPPING_PATH = os.getenv(
+    "DOCSPACE_MAPPING_PATH",
+    "/app/data/docspace-mappings.json",
+)
+DOCSPACE_POLL_INTERVAL_SECONDS = float(
+    os.getenv("DOCSPACE_POLL_INTERVAL_SECONDS", "30")
+)
 
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
@@ -40,6 +51,7 @@ class MattermostClient:
         self.session.headers.update({"Authorization": f"Bearer {MM_TOKEN}"})
         self.bot_user_id = ""
         self.channel_last_seen: dict[str, int] = {}
+        self.processed_post_ids: dict[str, None] = {}
         self.start_time_ms = int(time.time() * 1000)
 
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
@@ -62,10 +74,11 @@ class MattermostClient:
         for channel in self.get_my_channels():
             channel_id = channel["id"]
             since = self.channel_last_seen.get(channel_id, self.start_time_ms)
+            query_since = max(0, since - 60_000) if channel_id in self.channel_last_seen else since
             posts = self.request(
                 "GET",
                 f"/api/v4/channels/{channel_id}/posts",
-                params={"since": str(since), "per_page": "60"},
+                params={"since": str(query_since), "per_page": "60"},
             )
 
             max_seen = since
@@ -74,11 +87,15 @@ class MattermostClient:
                 create_at = post.get("create_at", 0)
                 max_seen = max(max_seen, create_at)
                 if (
-                    create_at > since
+                    create_at > query_since
+                    and post_id not in self.processed_post_ids
                     and post.get("user_id") != self.bot_user_id
                     and _mentions_bot(post.get("message", ""))
                 ):
                     mentions.append(post)
+                    self.processed_post_ids[post_id] = None
+                    if len(self.processed_post_ids) > 2_000:
+                        self.processed_post_ids.pop(next(iter(self.processed_post_ids)))
 
             self.channel_last_seen[channel_id] = max_seen
 
@@ -94,6 +111,21 @@ class MattermostClient:
 
     def get_file_info(self, file_id: str) -> dict[str, Any]:
         return self.request("GET", f"/api/v4/files/{file_id}/info")
+
+    def get_channel(self, channel_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/api/v4/channels/{channel_id}")
+
+    def get_channel_members(self, channel_id: str) -> list[dict[str, Any]]:
+        return self.request(
+            "GET",
+            f"/api/v4/channels/{channel_id}/members",
+            params={"page": "0", "per_page": "200"},
+        )
+
+    def get_users(self, user_ids: list[str]) -> list[dict[str, Any]]:
+        if not user_ids:
+            return []
+        return self.request("POST", "/api/v4/users/ids", json=user_ids)
 
     def get_user(self, user_id: str) -> dict[str, Any]:
         return self.request("GET", f"/api/v4/users/{user_id}")
@@ -210,6 +242,176 @@ def create_meeting(post: dict[str, Any], creator_username: str, title: str, dura
     )
 
 
+def room_response(client: DocSpaceClient, mapping: dict[str, Any], heading: str) -> str:
+    room_id = mapping["room_id"]
+    return (
+        f"### {heading}\n"
+        f"- 房间名称：{mapping['room_title']}\n"
+        f"- 房间 ID：{room_id}\n"
+        f"- 房间入口：[进入 DocSpace 协作房间]({client.room_url(room_id)})"
+    )
+
+
+def sync_room_members(
+    mm: MattermostClient,
+    client: DocSpaceClient,
+    channel_id: str,
+    room_id: str,
+) -> str:
+    try:
+        memberships = mm.get_channel_members(channel_id)
+        users = mm.get_users([membership["user_id"] for membership in memberships])
+        emails = sorted(
+            {
+                user["email"].strip().lower()
+                for user in users
+                if user.get("email")
+                and not user.get("is_bot")
+                and not user.get("delete_at")
+            }
+        )
+        invite_emails: list[str] = []
+        skipped = 0
+        for email in emails:
+            docspace_user = client.find_user(email)
+            if docspace_user and (
+                docspace_user.get("isOwner")
+                or docspace_user.get("isAdmin")
+                or docspace_user.get("isVisitor")
+            ):
+                skipped += 1
+                continue
+            invite_emails.append(email)
+
+        client.invite_users(room_id, invite_emails)
+        LOGGER.info(
+            "room %s member sync completed, invited=%s, skipped=%s",
+            room_id,
+            len(invite_emails),
+            skipped,
+        )
+        if not emails:
+            return "\n- 成员同步：未发现可邀请的成员邮箱"
+        result = f"\n- 成员同步：已邀请 {len(invite_emails)} 名频道成员（可编辑）"
+        if skipped:
+            result += f"，跳过 {skipped} 名已有管理或受限账号"
+        return result
+    except Exception:
+        LOGGER.exception("room %s member sync failed", room_id)
+        return "\n- 成员同步：失败，请查看 filebot 服务日志"
+
+
+def handle_room_command(
+    mm: MattermostClient,
+    post: dict[str, Any],
+    command: ParsedCommand,
+) -> str:
+    if not DOCSPACE_BASE_URL or not DOCSPACE_API_KEY:
+        raise RuntimeError("DocSpace 服务地址或 API Key 未配置")
+
+    channel = mm.get_channel(post["channel_id"])
+    team_id = channel["team_id"]
+    channel_id = channel["id"]
+    store = RoomMappingStore(DOCSPACE_MAPPING_PATH)
+    client = DocSpaceClient(DOCSPACE_BASE_URL, DOCSPACE_API_KEY)
+    existing = store.get(team_id, channel_id)
+
+    if command.action == "show":
+        if not existing:
+            return "### 尚未绑定\n当前频道还没有对应的 DocSpace 房间。"
+        return room_response(client, existing, "当前频道的 DocSpace 房间")
+
+    if command.action == "sync":
+        if not existing:
+            return "### 执行失败\n- 错误码：BOT-ROOM-NOT-BOUND\n- 原因：当前频道尚未绑定 DocSpace 房间。"
+        return room_response(client, existing, "DocSpace 房间成员同步") + sync_room_members(
+            mm,
+            client,
+            channel_id,
+            existing["room_id"],
+        )
+
+    if existing:
+        if command.action == "bind" and existing["room_id"] != command.instruction:
+            return (
+                "### 执行失败\n"
+                "- 错误码：BOT-ROOM-ALREADY-BOUND\n"
+                f"- 原因：当前频道已绑定房间 `{existing['room_id']}`，不会自动覆盖。"
+            )
+        return room_response(client, existing, "DocSpace 房间已绑定")
+
+    if command.action == "create":
+        title = command.instruction or channel.get("display_name") or channel["name"]
+        room = client.create_room(
+            title,
+            f"由 Mattermost 频道 {channel.get('display_name') or channel['name']} 自动创建。",
+        )
+        mapping = store.bind(team_id, channel_id, str(room["id"]), room["title"])
+        return room_response(client, mapping, "DocSpace 房间创建成功") + sync_room_members(
+            mm,
+            client,
+            channel_id,
+            mapping["room_id"],
+        )
+
+    room = client.get_room(command.instruction)
+    mapping = store.bind(team_id, channel_id, str(room["id"]), room["title"])
+    return room_response(client, mapping, "DocSpace 房间绑定成功") + sync_room_members(
+        mm,
+        client,
+        channel_id,
+        mapping["room_id"],
+    )
+
+
+def check_room_updates(mm: MattermostClient) -> None:
+    if not DOCSPACE_BASE_URL or not DOCSPACE_API_KEY:
+        return
+
+    store = RoomMappingStore(DOCSPACE_MAPPING_PATH)
+    client = DocSpaceClient(DOCSPACE_BASE_URL, DOCSPACE_API_KEY)
+    for mapping in store.all():
+        try:
+            room = client.get_room(mapping["room_id"])
+            updated = room.get("updated")
+            if not updated:
+                continue
+
+            previous = mapping.get("last_notified_updated")
+            if not previous:
+                store.set_last_updated(
+                    mapping["team_id"],
+                    mapping["channel_id"],
+                    updated,
+                )
+                continue
+            if updated == previous:
+                continue
+
+            display_updated = updated[:19].replace("T", " ")
+            mm.create_post(
+                mapping["channel_id"],
+                (
+                    "### DocSpace 文档已更新\n"
+                    f"- 房间名称：{room.get('title') or mapping['room_title']}\n"
+                    f"- 更新时间：{display_updated}\n"
+                    f"- 房间入口：[进入 DocSpace 协作房间]({client.room_url(mapping['room_id'])})"
+                ),
+                "",
+            )
+            store.set_last_updated(
+                mapping["team_id"],
+                mapping["channel_id"],
+                updated,
+            )
+            LOGGER.info("room %s update notification sent", mapping["room_id"])
+        except Exception:
+            LOGGER.exception(
+                "room %s update check failed",
+                mapping.get("room_id"),
+            )
+
+
 def handle_post(mm: MattermostClient, post: dict[str, Any]) -> None:
     root_id = post.get("root_id") or post["id"]
     try:
@@ -227,6 +429,12 @@ def handle_post(mm: MattermostClient, post: dict[str, Any]) -> None:
         return
 
     try:
+        LOGGER.info(
+            "post %s matched command=%s.%s",
+            post["id"],
+            command.domain,
+            command.action,
+        )
         if command.domain == "meeting" and command.action == "create":
             creator = mm.get_user(post["user_id"])
             answer = create_meeting(
@@ -235,6 +443,8 @@ def handle_post(mm: MattermostClient, post: dict[str, Any]) -> None:
                 command.instruction,
                 command.duration_minutes,
             )
+        elif command.domain == "room":
+            answer = handle_room_command(mm, post, command)
         else:
             file_ids = collect_file_ids(mm, post)
             LOGGER.info("post %s matched, files=%s", post["id"], file_ids)
@@ -249,10 +459,15 @@ def main() -> None:
     mm = MattermostClient()
     mm.init_identity()
     LOGGER.info("polling mentions for @%s", BOT_USERNAME)
+    last_docspace_poll = 0.0
     while True:
         try:
             for post in mm.get_new_mentions():
                 handle_post(mm, post)
+            now = time.monotonic()
+            if now - last_docspace_poll >= DOCSPACE_POLL_INTERVAL_SECONDS:
+                check_room_updates(mm)
+                last_docspace_poll = now
         except Exception:
             LOGGER.exception("poll loop failed")
         time.sleep(POLL_INTERVAL_SECONDS)

@@ -79,6 +79,35 @@ class ParseCommandTest(unittest.TestCase):
         self.assertEqual(command.domain, "meeting")
         self.assertEqual(command.action, "create")
 
+    def test_room_create_with_title(self) -> None:
+        command = parse_command(
+            "@assistant room create 项目资料室",
+            "assistant",
+        )
+
+        self.assertEqual(command.domain, "room")
+        self.assertEqual(command.action, "create")
+        self.assertEqual(command.instruction, "项目资料室")
+
+    def test_room_bind(self) -> None:
+        command = parse_command("@assistant room bind 123", "assistant")
+
+        self.assertEqual(command.domain, "room")
+        self.assertEqual(command.action, "bind")
+        self.assertEqual(command.instruction, "123")
+
+    def test_room_show(self) -> None:
+        command = parse_command("@assistant room show", "assistant")
+
+        self.assertEqual(command.domain, "room")
+        self.assertEqual(command.action, "show")
+
+    def test_room_sync(self) -> None:
+        command = parse_command("@assistant room sync", "assistant")
+
+        self.assertEqual(command.domain, "room")
+        self.assertEqual(command.action, "sync")
+
 
 if __name__ == "__main__":
     unittest.main()

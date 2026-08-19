@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 DEFAULT_FILE_ANALYSIS_INSTRUCTION = "请分析并总结附件内容"
 DEFAULT_MEETING_TITLE = "临时会议"
+DEFAULT_ROOM_TITLE = ""
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,29 @@ def parse_command(
             duration = int(duration_value)
         return ParsedCommand("meeting", "create", title, duration)
 
+    room_create_match = re.fullmatch(
+        r"room\s+create(?:\s+(.+))?",
+        content,
+        flags=re.IGNORECASE,
+    )
+    if room_create_match:
+        title = (room_create_match.group(1) or DEFAULT_ROOM_TITLE).strip()
+        return ParsedCommand("room", "create", title)
+
+    room_bind_match = re.fullmatch(
+        r"room\s+bind\s+(\d+)",
+        content,
+        flags=re.IGNORECASE,
+    )
+    if room_bind_match:
+        return ParsedCommand("room", "bind", room_bind_match.group(1))
+
+    if re.fullmatch(r"room\s+show", content, flags=re.IGNORECASE):
+        return ParsedCommand("room", "show", "")
+
+    if re.fullmatch(r"room\s+sync", content, flags=re.IGNORECASE):
+        return ParsedCommand("room", "sync", "")
+
     if allow_legacy_filebot:
         return ParsedCommand(
             "file",
@@ -69,5 +93,6 @@ def parse_command(
     raise CommandError(
         "BOT-COMMAND-INVALID",
         "命令格式不正确，请使用 `@assistant file analyze [分析要求]` 或 "
-        "`@assistant meeting create [会议标题] [--duration 分钟]`。",
+        "`@assistant meeting create [会议标题] [--duration 分钟]`，或 "
+        "`@assistant room create|bind|show|sync`。",
     )
