@@ -65,7 +65,7 @@ class DocSpaceClient:
             f"/api/2.0/files/rooms/{room_id}/share",
             json={
                 "invitations": [
-                    {"email": email, "access": "ReadWrite"} for email in emails
+                    {"email": email, "access": "Editing"} for email in emails
                 ],
                 "notify": True,
                 "message": "您已被邀请加入 Mattermost 频道对应的 DocSpace 协作房间。",
